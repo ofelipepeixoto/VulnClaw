@@ -26,16 +26,28 @@ def token_file(monkeypatch, tmp_path):
     return directory / "web_token"
 
 
-@pytest.mark.parametrize("token", [None, 1, b"test", "", "é", "x" * 4097])
+@pytest.mark.parametrize("token", [None, 1, b"test", "", "é", "x" * 513])
 def test_invalid_presented_token_is_rejected(token_file, token):
     token_file.write_text("fixture-token", encoding="utf-8")
     assert auth.verify_token(token) is False
 
 
-@pytest.mark.parametrize("stored", [b"", b" \n", "é".encode(), b"\xff", b"x" * 4097])
+@pytest.mark.parametrize("stored", [b"", b" \n", "é".encode(), b"\xff", b"x" * 513])
 def test_invalid_stored_token_is_rejected(token_file, stored):
     token_file.write_bytes(stored)
     assert auth.verify_token(stored.decode("utf-8", errors="replace").strip()) is False
+
+
+def test_maximum_length_ascii_token_is_accepted(token_file):
+    token = "x" * 512
+    token_file.write_text(token, encoding="utf-8")
+    assert auth.verify_token(token) is True
+
+
+@pytest.mark.parametrize("token", ["fixture token", "fixture\x00token"])
+def test_matching_whitespace_or_control_token_is_rejected(token_file, token):
+    token_file.write_text(token, encoding="utf-8")
+    assert auth.verify_token(token) is False
 
 
 def test_verification_does_not_create_directory(token_file):

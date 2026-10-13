@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
 
 TOKEN_DIR = CONFIG_DIR
 TOKEN_FILE = TOKEN_DIR / "web_token"
-_MAX_TOKEN_CHARS = 4096
+_MAX_TOKEN_CHARS = 512
 
 #: Name of the session cookie that carries the bearer token for browser clients.
 SESSION_COOKIE = "vulnclaw_session"
