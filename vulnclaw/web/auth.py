@@ -1,6 +1,7 @@
 """Token-based authentication for the VulnClaw Web UI.
 
-The token is generated once and persisted to ``~/.vulnclaw/web_token``.
+The token is generated once and persisted to ``CONFIG_DIR / web_token``
+(``~/.vulnclaw/web_token`` unless ``VULNCLAW_CONFIG_DIR`` is set).
 All ``/api/`` routes (except ``/api/health``) require a valid
 ``Authorization: Bearer <token>`` header, a session cookie carrying the same
 token, or a loopback peer address.
@@ -20,6 +21,8 @@ import os
 import secrets
 from pathlib import Path
 
+from vulnclaw.config.settings import CONFIG_DIR
+
 try:
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
@@ -29,8 +32,9 @@ try:
 except ImportError:  # pragma: no cover
     _HAS_STARLETTE = False
 
-TOKEN_DIR = Path.home() / ".vulnclaw"
+TOKEN_DIR = CONFIG_DIR
 TOKEN_FILE = TOKEN_DIR / "web_token"
+_MAX_TOKEN_CHARS = 4096
 
 #: Name of the session cookie that carries the bearer token for browser clients.
 SESSION_COOKIE = "vulnclaw_session"
@@ -71,11 +75,32 @@ def verify_token(token: str) -> bool:
 
     Uses :func:`hmac.compare_digest` for timing-safe comparison.
     """
-    path = _token_path()
-    if not path.exists():
+    if not _valid_token(token):
         return False
-    stored = path.read_text(encoding="utf-8").strip()
+    try:
+        # Verification never creates credentials or directories. Bound reads so
+        # malformed files cannot cause an unbounded allocation per request.
+        with TOKEN_FILE.open(encoding="utf-8") as stream:
+            raw = stream.read(_MAX_TOKEN_CHARS + 1)
+    except (OSError, UnicodeError):
+        return False
+    if len(raw) > _MAX_TOKEN_CHARS:
+        return False
+    stored = raw.strip()
+    if not _valid_token(stored):
+        return False
     return hmac.compare_digest(stored, token)
+
+
+def _valid_token(token: object) -> bool:
+    """Only bounded, nonempty ASCII credentials can be compared safely."""
+    return (
+        isinstance(token, str)
+        and 0 < len(token) <= _MAX_TOKEN_CHARS
+        and token.isascii()
+        and token.isprintable()
+        and not any(char.isspace() for char in token)
+    )
 
 
 def web_cookie_secure() -> bool:
