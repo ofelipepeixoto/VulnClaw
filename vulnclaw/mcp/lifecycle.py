@@ -73,24 +73,6 @@ def _is_benign_shutdown_exception(exc: BaseException) -> bool:
     return isinstance(exc, (GeneratorExit, asyncio.CancelledError))
 
 
-def _is_tls_verification_error(exc: BaseException) -> bool:
-    """Return true for certificate verification failures wrapped by httpx/httpcore."""
-
-    current: BaseException | None = exc
-    seen = 0
-    while current is not None and seen < 8:
-        message = str(current).lower()
-        if (
-            "certificate_verify_failed" in message
-            or "certificate verify failed" in message
-            or "unable to get local issuer certificate" in message
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-        seen += 1
-    return False
-
-
 class MCPLifecycleManager(ProbeMixin):
     """Manages the lifecycle of MCP servers: start, stop, health check.
 
@@ -923,7 +905,7 @@ class MCPLifecycleManager(ProbeMixin):
                             },
                             "verify_tls": {
                                 "type": "boolean",
-                                "description": "Verify TLS certificates, default false for CTF/lab compatibility",
+                                "description": "Verify TLS certificates, default true; set false explicitly only for trusted labs",
                             },
                             "max_body_chars": {
                                 "type": "integer",
@@ -1442,28 +1424,14 @@ class MCPLifecycleManager(ProbeMixin):
                 jar = httpx.Cookies()
                 self._fetch_cookies = jar
 
-            try:
-                async with httpx.AsyncClient(
-                    verify=request["verify_tls"],
-                    timeout=request["timeout"],
-                    follow_redirects=request["follow_redirects"],
-                    cookies=jar,
-                ) as client:
-                    response = await client.request(**request["kwargs"])
-                    jar.extract_cookies(response)
-            except httpx.TransportError as exc:
-                if request["verify_tls"] and _is_tls_verification_error(exc):
-                    request = {**request, "verify_tls": False, "tls_retry": True}
-                    async with httpx.AsyncClient(
-                        verify=False,
-                        timeout=request["timeout"],
-                        follow_redirects=request["follow_redirects"],
-                        cookies=jar,
-                    ) as client:
-                        response = await client.request(**request["kwargs"])
-                        jar.extract_cookies(response)
-                else:
-                    raise
+            async with httpx.AsyncClient(
+                verify=request["verify_tls"],
+                timeout=request["timeout"],
+                follow_redirects=request["follow_redirects"],
+                cookies=jar,
+            ) as client:
+                response = await client.request(**request["kwargs"])
+                jar.extract_cookies(response)
 
             return self._format_fetch_response(response, request)
 
@@ -1487,7 +1455,7 @@ class MCPLifecycleManager(ProbeMixin):
                 default=_FETCH_DEFAULT_TIMEOUT,
             ),
             "follow_redirects": self._coerce_fetch_bool(args.get("follow_redirects"), True),
-            "verify_tls": self._coerce_fetch_bool(args.get("verify_tls"), False),
+            "verify_tls": self._coerce_fetch_bool(args.get("verify_tls"), True),
             "max_body_chars": self._coerce_nonnegative_int(
                 args.get("max_body_chars"),
                 default=_FETCH_DEFAULT_BODY_CHARS_LIMIT,
@@ -1530,10 +1498,6 @@ class MCPLifecycleManager(ProbeMixin):
 
     def _format_fetch_response(self, response: Any, request: dict[str, Any]) -> str:
         lines = [f"Request: {request['method']} {request['url']}"]
-        if request.get("tls_retry"):
-            lines.append(
-                "TLS verification failed; retried once with verify_tls=false for lab/CTF compatibility."
-            )
         final_url = str(response.url)
         if final_url != request["url"]:
             lines.append(f"Final URL: {final_url}")

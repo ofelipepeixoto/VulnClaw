@@ -32,7 +32,7 @@ def _patch_fetch_transport(monkeypatch, handler, seen_client_kwargs=None):
 
 
 @pytest.mark.asyncio
-async def test_call_fetch_defaults_to_get_and_supports_https_without_tls_verification(
+async def test_call_fetch_defaults_to_get_and_verifies_tls(
     monkeypatch,
 ):
     seen_client_kwargs: list[dict] = []
@@ -49,12 +49,12 @@ async def test_call_fetch_defaults_to_get_and_supports_https_without_tls_verific
 
     assert "Request: GET https://example.com/" in result
     assert "Status: 200" in result
-    assert seen_client_kwargs[0]["verify"] is False
+    assert seen_client_kwargs[0]["verify"] is True
     assert seen_client_kwargs[0]["follow_redirects"] is True
 
 
 @pytest.mark.asyncio
-async def test_call_fetch_retries_once_without_tls_after_certificate_failure(monkeypatch):
+async def test_call_fetch_does_not_downgrade_after_certificate_failure(monkeypatch):
     seen_verify: list[bool] = []
 
     class RetryAsyncClient:
@@ -84,9 +84,9 @@ async def test_call_fetch_retries_once_without_tls_after_certificate_failure(mon
         {"url": "https://example.com/", "verify_tls": True}
     )
 
-    assert seen_verify == [True, False]
-    assert "TLS verification failed; retried once with verify_tls=false" in result
-    assert "ok-after-retry" in result
+    assert seen_verify == [True]
+    assert "certificate verify failed" in result
+    assert "ok-after-retry" not in result
 
 
 @pytest.mark.asyncio
